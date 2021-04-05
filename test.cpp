@@ -4,22 +4,44 @@
 #include "user.hpp"
 #include "socket.hpp"
 #include <map>
+#include <sstream>
 
 using namespace std;
 
+#define BASE_STATE 0
+#define MID_STATE 1
+#define USER_STATE 2
+#define ADMIN_STATE 3
+
 #define EMPTY ""
 #define MAX_MESSAGE_LEN 100
+
 #define port first
 #define sfd second
+
+#define login_state first
+#define login_username second
+
 #define MAX_USER 1000
 #define NO_USER -1
 #define MAX_PENDING_CON 5
 #define COMMAND 1
 #define DATA 2
 
+#define BAD_SEQUENCE_OF_COMMANDS "503: Bad sequence of commands.\n"
+#define USERNAME_IS_OK "331: User name okay, need password.\n"
+#define INVALID_USER_PASS "430: Invalid username or password.\n"
+#define SUCCESSFUL_LOGIN "230: User logged in, proceed. Logged out if appropriate.\n"
+#define ERROR "500: Error\n"
+#define SUCCESSFUL_QUIT "221: Successful Quit.\n"
+
 typedef int Port;
 typedef int Sfd;
+typedef int State;
+typedef string Username;
+
 typedef pair < Port , Sfd > Client_info;
+typedef pair < State , Username > Login_State;
 
 string convert_to_string(char* str , int length){
 	string result = EMPTY;
@@ -67,7 +89,8 @@ int make_reading_list(fd_set* read_sockfd_list , int command_sock , int data_soc
 }
 
 void check_for_new_connection(int command_or_data , int acceptor_sockfd , fd_set* read_sockfd_list ,
-									 Client_info client_sockfd_list[] , map < int , int >& command_fd_to_data_fd){
+									 Client_info client_sockfd_list[] , map < int , int >& command_fd_to_data_fd ,
+									 map < Sfd , Login_State >& clients_state){
 	int client_sockfd;
 	struct sockaddr_in client_address;
 
@@ -98,12 +121,111 @@ void check_for_new_connection(int command_or_data , int acceptor_sockfd , fd_set
 					}
 				}
 			}
+			else{
+				clients_state[client_sockfd].login_state = BASE_STATE;
+				clients_state[client_sockfd].login_username = EMPTY;
+			}
 		}
 	}
 }
 
+string username_command_handler(int client_sockfd , stringstream& command_stream ,
+								map < Sfd , Login_State >& clients_state){
+
+	string client_username;
+	command_stream >> client_username;
+
+	if(clients_state[client_sockfd].login_state != BASE_STATE){
+		return BAD_SEQUENCE_OF_COMMANDS;
+	}
+
+	clients_state[client_sockfd].login_state = MID_STATE;
+	clients_state[client_sockfd].login_username = client_username;
+
+	return USERNAME_IS_OK;
+}
+
+int check_username_and_password(string username, string password, vector < User > users){
+	for(int i = 0 ; i < users.size() ; i++){
+		if(users[i].username == username){
+			if(users[i].password == password){
+				if(users[i].is_admin == true)
+					return ADMIN_STATE;
+				else
+					return USER_STATE;
+			}
+			else{
+				return BASE_STATE;
+			}
+		}
+	}
+	return BASE_STATE;
+}
+
+string password_command_handler(int client_sockfd , stringstream& command_stream ,
+								map < Sfd , Login_State >& clients_state , 
+								vector < User > users){
+
+	string client_password;
+	command_stream >> client_password;
+
+	if(clients_state[client_sockfd].login_state != MID_STATE){
+		return BAD_SEQUENCE_OF_COMMANDS;
+	}
+
+	int login_status = check_username_and_password(clients_state[client_sockfd].login_username, client_password, users);
+
+	if(login_status == BASE_STATE){
+		clients_state[client_sockfd].login_state = BASE_STATE;
+		clients_state[client_sockfd].login_username = EMPTY;
+		return INVALID_USER_PASS;
+	}
+	else{
+		clients_state[client_sockfd].login_state = login_status;
+		return SUCCESSFUL_LOGIN;
+	}
+}
+
+string quit_command_handler(int client_sockfd , map < Sfd , Login_State >& clients_state){
+	if(clients_state[client_sockfd].login_state == BASE_STATE || 
+						clients_state[client_sockfd].login_state == MID_STATE)
+		return ERROR;
+
+	clients_state[client_sockfd].login_state = BASE_STATE;
+	return SUCCESSFUL_QUIT;
+}
+
+string command_handler(string command_message , int client_sockfd , map < int , int >& command_fd_to_data_fd , 
+										 map < Sfd , Login_State >& clients_state , 
+										 vector < User > users){
+	string log = "Nothing...\n";
+
+	stringstream command_stream(command_message);
+
+	string command;
+	command_stream >> command;
+
+	if(command == "user")
+		log = username_command_handler(client_sockfd , command_stream , clients_state);
+	else if(command == "pass")
+		log = password_command_handler(client_sockfd , command_stream , clients_state , users);
+	else if(command == "quit")
+		log = quit_command_handler(client_sockfd , clients_state);
+	else{
+		if(clients_state[client_sockfd].login_state == MID_STATE){
+			clients_state[client_sockfd].login_state = BASE_STATE;
+			log = BAD_SEQUENCE_OF_COMMANDS;
+		}
+	}
+
+	send_response_to_client(command_fd_to_data_fd[client_sockfd] , log);
+	return log;
+}
+
 void check_for_clients_responses(fd_set* read_sockfd_list , Client_info client_sockfd_list[] , char* result , 
-												map < int , int >& command_fd_to_data_fd){
+												map < int , int >& command_fd_to_data_fd , 
+												map < Sfd , Login_State >& clients_state , 
+												vector < User > users){
 	for(int i = 0 ; i < MAX_USER ; i++){
 		if(client_sockfd_list[i].sfd == NO_USER)
 			continue;
@@ -122,7 +244,9 @@ void check_for_clients_responses(fd_set* read_sockfd_list , Client_info client_s
 				client_sockfd_list[i].port = NO_USER;
 			}
 			else{
-				send_response_to_client(command_fd_to_data_fd[client_sockfd_list[i].sfd] , received_message);
+				string log = command_handler(received_message , client_sockfd_list[i].sfd , command_fd_to_data_fd , 
+												clients_state , users);
+				cout << log << endl;
 			}
 		}
 	}
@@ -131,7 +255,9 @@ void check_for_clients_responses(fd_set* read_sockfd_list , Client_info client_s
 int main(){
 
 	Client_info client_sockfd_list[MAX_USER];
+
 	map < int , int > command_fd_to_data_fd;
+	map < Sfd , Login_State > clients_state;
 	// Json_parser my_parser("config.json");
 	// cout << my_parser.get_raw_data() << endl;
 // 	cout << my_parser.get_server_command_port() << endl;
@@ -145,11 +271,14 @@ int main(){
 	int server_command_port = 8000;
 	int server_data_port = 8001;
 
-	User admin;
-	admin.username = "Ali";
-	admin.password = "1234";
-	admin.is_admin = 1;
-	admin.download_size = 100000;
+	User test_user;
+	test_user.username = "Ali";
+	test_user.password = "1234";
+	test_user.is_admin = 1;
+	test_user.download_size = 100000;
+
+	vector < User > users;
+	users.push_back(test_user);
 
 	fd_set read_sockfd_list;
 
@@ -183,10 +312,11 @@ int main(){
 			cout << "Select Error..." << endl;
 		
 		check_for_new_connection(COMMAND , command_sock.fd() , &read_sockfd_list , 
-													client_sockfd_list , command_fd_to_data_fd);
+													client_sockfd_list , command_fd_to_data_fd , clients_state);
 		check_for_new_connection(DATA , data_sock.fd() , &read_sockfd_list , 
-													client_sockfd_list , command_fd_to_data_fd);
-		check_for_clients_responses(&read_sockfd_list , client_sockfd_list , result , command_fd_to_data_fd);
+													client_sockfd_list , command_fd_to_data_fd , clients_state);
+		check_for_clients_responses(&read_sockfd_list , client_sockfd_list , result , command_fd_to_data_fd ,
+													clients_state , users);
 	}
 
 }
