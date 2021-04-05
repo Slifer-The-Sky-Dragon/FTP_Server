@@ -37,5 +37,5 @@ void Socket::bindSock(in_addr_t ip, int port) {
 int Socket::fd() { return sockfd; }
 
 Address Socket::addr() {
-    return {std::to_string(ntohl(sin.sin_addr.s_addr)), ntohs(sin.sin_port)};
+    return {inet_ntoa(sin.sin_addr), ntohs(sin.sin_port)};
 }

@@ -22,5 +22,5 @@ int main(){
     s.bindSock(INADDR_LOOPBACK, 10000);
     s.setOpt(SO_REUSEADDR);
     cout << "socket created and bound successfully" << '\n';
-    // cout << "fd: " << s.fd() << ", addr: " << s.addr().first << ", " << s.addr().second << '\n';
+    cout << "fd: " << s.fd() << ", addr: " << s.addr().first << ", " << s.addr().second << '\n';
 }

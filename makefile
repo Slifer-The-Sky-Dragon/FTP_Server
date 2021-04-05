@@ -18,8 +18,7 @@ util.o: util.hpp util.cpp
 	$(CC) $(CC_OPTS) -c util.cpp -o $(BUILD_DIR)/util.o
 
 clean:
-	rm -f $(BUILD_DIR)/*.o *.out
-	rm -rf $(BUILD_DIR)/
+	rm -rf $(BUILD_DIR)/ *.out
 
 make_build:
 	mkdir -p build
