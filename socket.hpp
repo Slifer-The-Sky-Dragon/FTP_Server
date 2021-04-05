@@ -2,6 +2,10 @@
 #define __SOCKET_HPP__
 
 #include <string>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <netinet/in.h>
 #include <stdexcept>
 #include <utility>
