@@ -7,6 +7,8 @@
 
 using namespace std;
 
+#define EMPTY ""
+#define MAX_MESSAGE_LEN 100
 #define port first
 #define sfd second
 #define MAX_USER 1000
@@ -18,6 +20,33 @@ using namespace std;
 typedef int Port;
 typedef int Sfd;
 typedef pair < Port , Sfd > Client_info;
+
+string convert_to_string(char* str , int length){
+	string result = EMPTY;
+	for(int i = 0 ; i < length ; i++){
+		result += str[i];
+	}
+	return result;
+}
+
+void fill_string_zero(char* str){
+	for(int i = 0 ; i < MAX_MESSAGE_LEN ; i++)
+		str[i] = '\0';
+}
+
+void send_response_to_client(int client_sockfd , string message){
+	if(send(client_sockfd , message.c_str() , MAX_MESSAGE_LEN , 0) != MAX_MESSAGE_LEN)
+		cout << "Failed to send message...\n";
+	else
+		cout << "Message sent succesfully!\n";	
+}
+
+void send_response_to_client(int client_sockfd , char* message){
+	if(send(client_sockfd , message , MAX_MESSAGE_LEN , 0) != MAX_MESSAGE_LEN)
+		cout << "Failed to send message..." << endl;
+	else
+		cout << "Message sent succesfully!" << endl;	
+}
 
 int make_reading_list(fd_set* read_sockfd_list , int command_sock , int data_sock , Client_info client_sockfd_list[]){
 	FD_ZERO(read_sockfd_list);
@@ -37,8 +66,8 @@ int make_reading_list(fd_set* read_sockfd_list , int command_sock , int data_soc
 	return max_fd;
 }
 
-void check_for_new_connection(int command_or_data , int acceptor_sockfd , 
-									fd_set* read_sockfd_list , Client_info client_sockfd_list[]){
+void check_for_new_connection(int command_or_data , int acceptor_sockfd , fd_set* read_sockfd_list ,
+									 Client_info client_sockfd_list[] , map < int , int >& command_fd_to_data_fd){
 	int client_sockfd;
 	struct sockaddr_in client_address;
 
@@ -50,19 +79,54 @@ void check_for_new_connection(int command_or_data , int acceptor_sockfd ,
 		else{
 			cout << "New client has joined...\n";
 
-			//send_response_to_client(client_sockfd , "Welcome!");
+			int client_port = ntohs(client_address.sin_port);
 
 			for(int i = 0 ; i < MAX_USER ; i++){
 				if(client_sockfd_list[i].sfd == NO_USER){
 					client_sockfd_list[i].sfd = client_sockfd;
-					client_sockfd_list[i].port = ntohs(client_address.sin_port);
+					client_sockfd_list[i].port = client_port;
 					break;
+				}
+			}
+
+			if(command_or_data == DATA){
+				for(int i = 0 ; i < MAX_USER ; i++){
+					if(client_sockfd_list[i].port == client_port - 1){
+						command_fd_to_data_fd[client_sockfd_list[i].sfd] = client_sockfd;
+						cout << "Command and Data fetched..." << endl;
+						break;
+					}
 				}
 			}
 		}
 	}
 }
 
+void check_for_clients_responses(fd_set* read_sockfd_list , Client_info client_sockfd_list[] , char* result , 
+												map < int , int >& command_fd_to_data_fd){
+	for(int i = 0 ; i < MAX_USER ; i++){
+		if(client_sockfd_list[i].sfd == NO_USER)
+			continue;
+
+		if(FD_ISSET(client_sockfd_list[i].sfd , read_sockfd_list)){
+			fill_string_zero(result);
+			int message_len = recv(client_sockfd_list[i].sfd , result , MAX_MESSAGE_LEN , 0);
+
+			string received_message = convert_to_string(result , message_len);
+			if(message_len < 0)
+				cout << "Recieving error..." << endl;
+			else if(message_len == 0){
+				cout << "A client has diconnected from server! Closing socket..." << endl;
+				close(client_sockfd_list[i].sfd);
+				client_sockfd_list[i].sfd = NO_USER;
+				client_sockfd_list[i].port = NO_USER;
+			}
+			else{
+				send_response_to_client(command_fd_to_data_fd[client_sockfd_list[i].sfd] , received_message);
+			}
+		}
+	}
+}
 
 int main(){
 
@@ -89,11 +153,11 @@ int main(){
 
 	fd_set read_sockfd_list;
 
+	char* result = (char*) malloc(MAX_MESSAGE_LEN * sizeof(char));
 	//Command Socket
     Socket command_sock(SOCK_STREAM);
     command_sock.setOpt(SO_REUSEADDR);
     command_sock.bindSock(INADDR_LOOPBACK, server_command_port);
-
     //Data Socket
     Socket data_sock(SOCK_STREAM);
     data_sock.setOpt(SO_REUSEADDR);
@@ -118,9 +182,13 @@ int main(){
 		if(activity < 0)
 			cout << "Select Error..." << endl;
 		
-		check_for_new_connection(COMMAND , command_sock.fd() , &read_sockfd_list , client_sockfd_list);
-		check_for_new_connection(DATA , data_sock.fd() , &read_sockfd_list , client_sockfd_list);
-		// check_for_clients_responses(&read_sockfd_list , client_sockfd_list , group , result , server_port);
+		check_for_new_connection(COMMAND , command_sock.fd() , &read_sockfd_list , 
+													client_sockfd_list , command_fd_to_data_fd);
+		check_for_new_connection(DATA , data_sock.fd() , &read_sockfd_list , 
+													client_sockfd_list , command_fd_to_data_fd);
+		check_for_clients_responses(&read_sockfd_list , client_sockfd_list , result , command_fd_to_data_fd);
 	}
 
 }
+
+
