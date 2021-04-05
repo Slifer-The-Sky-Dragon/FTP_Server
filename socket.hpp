@@ -23,13 +23,15 @@ public:
 class Socket {
 private:
     int sockfd;
-    SockaddrIn sin;
+    SockaddrIn bindsin, cnctsin;
 
 public:
     Socket(int type);
     ~Socket();
     void setOpt(int option);
     void bindSock(in_addr_t ip, int port);
+    void connectTo(in_addr_t ip, int port);
+    void closeSock();
     
     Address addr();
     int fd();

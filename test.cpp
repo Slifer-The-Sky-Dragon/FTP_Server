@@ -91,13 +91,13 @@ int main(){
 
 	//Command Socket
     Socket command_sock(SOCK_STREAM);
-    command_sock.bindSock(INADDR_LOOPBACK, server_command_port);
     command_sock.setOpt(SO_REUSEADDR);
+    command_sock.bindSock(INADDR_LOOPBACK, server_command_port);
 
     //Data Socket
     Socket data_sock(SOCK_STREAM);
-    data_sock.bindSock(INADDR_LOOPBACK, server_data_port);
     data_sock.setOpt(SO_REUSEADDR);
+    data_sock.bindSock(INADDR_LOOPBACK, server_data_port);
 
 	if(listen(command_sock.fd() , MAX_PENDING_CON) < 0)
 		cout << "Command Socket Listening error..." << endl;
@@ -124,5 +124,3 @@ int main(){
 	}
 
 }
-
-
