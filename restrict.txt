@@ -1,0 +1,2 @@
+This file may not be changed by non-admin clients;
+if such thing happens, we've messed big-time.

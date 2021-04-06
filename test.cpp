@@ -51,6 +51,7 @@ using namespace std;
 #define NEED_ACC "332: Need account for login.\n"
 #define SUCCESSFUL_CHANGE "250: Successful change.\n"
 #define STX_ERROR "501: Syntax error in parameters or arguments.\n"
+#define FILE_UNAVAILABLE "520: File unavailable.\n"
 #define DEL_FILE "-f"
 #define DEL_DIR "-d"
 
@@ -143,6 +144,15 @@ bool check_login(int client_sockfd, map<Sfd, Login_State>& clients_state) {
 
 bool check_admin(int client_sockfd, map<Sfd, Login_State>& clients_state) {
     return (clients_state[client_sockfd].login_state == ADMIN_STATE);
+}
+
+bool file_is_restricted(string full_path, vector<File>& admin_files) {
+    for (auto filename: admin_files) {
+        string full_filename = abspath(clear_new_line(BASE_DIR) + "/" + filename);
+        if (full_path == full_filename)
+            return true;
+    }
+    return false;
 }
 
 void check_for_new_connection(int command_or_data , int acceptor_sockfd , fd_set* read_sockfd_list ,
@@ -279,7 +289,7 @@ string mkd_command_handler(int client_sockfd , stringstream& command_stream ,
 }
 
 string delete_command_handler(int client_sockfd, stringstream& command_stream,
-                                map<Sfd, Login_State>& clients_state){
+                map<Sfd, Login_State>& clients_state, vector<File>& admin_files){
     if (!check_login(client_sockfd, clients_state))
         return NEED_ACC;
     
@@ -289,8 +299,9 @@ string delete_command_handler(int client_sockfd, stringstream& command_stream,
     string composed_path = clear_new_line(clients_state[client_sockfd].cur_dir) + "/" + path;
     string full_path = abspath(composed_path);
 
-    // check if this file is admin-restricted
-
+    if (!check_admin(client_sockfd, clients_state) && file_is_restricted(full_path, admin_files))
+        return FILE_UNAVAILABLE;
+    
     if (flag == DEL_FILE) {
         if (unlink(full_path.c_str()) == -1) {
             perror("unlink");
@@ -313,7 +324,7 @@ string delete_command_handler(int client_sockfd, stringstream& command_stream,
 }
 
 string rename_command_handler(int client_sockfd, stringstream& command_stream,
-                                map<Sfd, Login_State>& clients_state){
+                map<Sfd, Login_State>& clients_state, vector<File>& admin_files){
     if (!check_login(client_sockfd, clients_state))
         return NEED_ACC;
     
@@ -329,7 +340,8 @@ string rename_command_handler(int client_sockfd, stringstream& command_stream,
     cout << "abs_from: " << abs_from << '\n';
     cout << "abs_to: " << abs_to << '\n';
 
-    // check if this file is admin-restricted
+    if (!check_admin(client_sockfd, clients_state) && file_is_restricted(abs_from, admin_files))
+        return FILE_UNAVAILABLE;
 
     if (rename(abs_from.c_str(), abs_to.c_str()) == -1) {
         perror("rename");
@@ -366,7 +378,7 @@ string chdir_command_handler(int client_sockfd, stringstream& command_stream,
 
 string command_handler(string command_message , int client_sockfd , map < int , int >& command_fd_to_data_fd , 
                                          map < Sfd , Login_State >& clients_state , 
-                                         vector < User > users){
+                                         vector < User > users, vector < File >& admin_files){
     string log = "Nothing...\n";
 
     stringstream command_stream(command_message);
@@ -385,9 +397,9 @@ string command_handler(string command_message , int client_sockfd , map < int , 
     else if(command == "mkd")
         log = mkd_command_handler(client_sockfd , command_stream , clients_state);
     else if(command == "dele")
-        log = delete_command_handler(client_sockfd , command_stream , clients_state);
+        log = delete_command_handler(client_sockfd , command_stream , clients_state, admin_files);
     else if(command == "rename")
-        log = rename_command_handler(client_sockfd, command_stream, clients_state);
+        log = rename_command_handler(client_sockfd, command_stream, clients_state, admin_files);
     else if(command == "cwd")
         log = chdir_command_handler(client_sockfd, command_stream, clients_state);
     else{
@@ -407,7 +419,7 @@ string command_handler(string command_message , int client_sockfd , map < int , 
 void check_for_clients_responses(fd_set* read_sockfd_list , Client_info client_sockfd_list[] , char* result , 
                                                 map < int , int >& command_fd_to_data_fd , 
                                                 map < Sfd , Login_State >& clients_state , 
-                                                vector < User > users){
+                                                vector < User > users, vector < File >& admin_files){
     for(int i = 0 ; i < MAX_USER ; i++){
         if(client_sockfd_list[i].sfd == NO_USER)
             continue;
@@ -427,7 +439,7 @@ void check_for_clients_responses(fd_set* read_sockfd_list , Client_info client_s
             }
             else{
                 string log = command_handler(received_message , client_sockfd_list[i].sfd , command_fd_to_data_fd , 
-                                                clients_state , users);
+                                                clients_state , users , admin_files);
                 cout << log << endl;
             }
         }
@@ -539,7 +551,7 @@ int main(){
         check_for_new_connection(DATA , data_sock.fd() , &read_sockfd_list , 
                                                     client_sockfd_list , command_fd_to_data_fd , clients_state);
         check_for_clients_responses(&read_sockfd_list , client_sockfd_list , result , command_fd_to_data_fd ,
-                                                    clients_state , users);
+                                                    clients_state , users, admin_files);
     }
 
 }

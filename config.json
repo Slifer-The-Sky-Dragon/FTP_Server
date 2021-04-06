@@ -16,6 +16,7 @@
     }
   ],
     "files": [
-      "config.json"
+      "config.json",
+      "restrict.txt"
     ]
 }
