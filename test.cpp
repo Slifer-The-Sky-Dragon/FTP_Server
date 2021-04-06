@@ -1,6 +1,7 @@
 #include <iostream>
 #include <algorithm>
 #include <vector>
+#include <cstring>
 #include "user.hpp"
 #include "socket.hpp"
 #include <map>
@@ -35,7 +36,8 @@ using namespace std;
 #define ERROR "500: Error\n"
 #define SUCCESSFUL_QUIT "221: Successful Quit.\n"
 #define NEED_ACC "332: Need account for login.\n"
-
+#define SUCCESSFUL_CHANGE "250: Successful change.\n"
+#define STX_ERROR "501: Syntax error in parameters or arguments.\n"
 #define DEL_FILE "-f"
 #define DEL_DIR "-d"
 
@@ -79,7 +81,9 @@ void fill_string_zero(char* str){
 
 string abspath(string path) {
     char buf[MAX_MESSAGE_LEN];
-    realpath(path.c_str(), buf);
+    memset(buf, 0, MAX_MESSAGE_LEN);
+    if (!realpath(path.c_str(), buf))
+        perror("realpath");
     return string(buf);
 }
 
@@ -287,7 +291,7 @@ string delete_command_handler(int client_sockfd, stringstream& command_stream,
     }
     else {
         cout << "delete: undefined flag" << '\n';
-        return ERROR;
+        return STX_ERROR;
     }
 
     string log = "250: " + path + " deleted.\n";
@@ -318,8 +322,26 @@ string rename_command_handler(int client_sockfd, stringstream& command_stream,
         return ERROR;
     }
 
-    string log = "250: Successful change.\n";
-    return log;
+    return SUCCESSFUL_CHANGE;
+}
+
+string chdir_command_handler(int client_sockfd, stringstream& command_stream,
+                                map<Sfd, Login_State>& clients_state){
+    if (!check_login(client_sockfd, clients_state))
+        return NEED_ACC;
+
+    string path;
+    command_stream >> path;
+    string composed_path = clear_new_line(clients_state[client_sockfd].cur_dir) + "/" + path;
+    string abs_path = abspath(composed_path);
+
+    if (access(abs_path.c_str(), F_OK) == -1) {
+        perror("access");
+        return STX_ERROR;
+    }
+
+    clients_state[client_sockfd].cur_dir = abs_path + "\n";
+    return SUCCESSFUL_CHANGE;
 }
 
 string command_handler(string command_message , int client_sockfd , map < int , int >& command_fd_to_data_fd , 
@@ -346,11 +368,16 @@ string command_handler(string command_message , int client_sockfd , map < int , 
         log = delete_command_handler(client_sockfd , command_stream , clients_state);
     else if(command == "rename")
         log = rename_command_handler(client_sockfd, command_stream, clients_state);
+    else if(command == "cwd")
+        log = chdir_command_handler(client_sockfd, command_stream, clients_state);
     else{
         if(clients_state[client_sockfd].login_state == MID_STATE){
             clients_state[client_sockfd].login_state = BASE_STATE;
             log = BAD_SEQUENCE_OF_COMMANDS;
         }
+
+        else
+            log = ERROR;
     }
 
     send_response_to_client(client_sockfd , log);
@@ -396,15 +423,6 @@ int main(){
 
     BASE_DIR = getcwd(NULL , 0);
     BASE_DIR += "\n";
-    // Json_parser my_parser("config.json");
-    // cout << my_parser.get_raw_data() << endl;
-// 	cout << my_parser.get_server_command_port() << endl;
-// 	cout << my_parser.get_server_data_port() << endl;
-
-// 	vector < User > users = my_parser.get_server_users();
-
-// 	for(int i = 0 ; i < users.size() ; i++)
-// 		cout << users[i].username << ' ' << users[i].password << ' ' << users[i].is_admin << ' ' << users[i].download_size << endl;
 
     int server_command_port = 8000;
     int server_data_port = 8001;
@@ -458,5 +476,3 @@ int main(){
     }
 
 }
-
-

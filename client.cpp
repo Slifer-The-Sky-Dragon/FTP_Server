@@ -15,7 +15,7 @@ void find_usable_ports(Socket& cmd_sock, Socket& data_sock) {
         try {
             cmd_sock.bindSock(INADDR_LOOPBACK, i);
             data_sock.bindSock(INADDR_LOOPBACK, i + 1);
-            cout << "sokcets bound successfully (port: cmd, data="
+            cout << "sockets bound successfully (port: cmd, data="
                 << i << ", " << i + 1 << ")" << '\n';
             return;
         } catch (SocketError& e) {
