@@ -5,8 +5,11 @@
 #include "socket.hpp"
 #include <map>
 #include <sstream>
+#include <unistd.h>
 
 using namespace std;
+
+#define COMMAND_COMPLETED 0
 
 #define BASE_STATE 0
 #define MID_STATE 1
@@ -18,9 +21,6 @@ using namespace std;
 
 #define port first
 #define sfd second
-
-#define login_state first
-#define login_username second
 
 #define MAX_USER 1000
 #define NO_USER -1
@@ -34,19 +34,37 @@ using namespace std;
 #define SUCCESSFUL_LOGIN "230: User logged in, proceed. Logged out if appropriate.\n"
 #define ERROR "500: Error\n"
 #define SUCCESSFUL_QUIT "221: Successful Quit.\n"
+#define NEED_ACC "332: Need account for login.\n"
 
 typedef int Port;
 typedef int Sfd;
 typedef int State;
 typedef string Username;
+typedef string Directory;
 
 typedef pair < Port , Sfd > Client_info;
-typedef pair < State , Username > Login_State;
+
+string BASE_DIR;
+
+struct Login_State{
+	State login_state;
+	Username login_username;
+	Directory cur_dir;
+};
 
 string convert_to_string(char* str , int length){
 	string result = EMPTY;
 	for(int i = 0 ; i < length ; i++){
 		result += str[i];
+	}
+	return result;
+}
+
+string clear_new_line(string x){
+	string result = EMPTY;
+	for(int i = 0 ; i < x.size() ; i++){
+		if(x[i] != '\n')
+			result += x[i];
 	}
 	return result;
 }
@@ -124,6 +142,7 @@ void check_for_new_connection(int command_or_data , int acceptor_sockfd , fd_set
 			else{
 				clients_state[client_sockfd].login_state = BASE_STATE;
 				clients_state[client_sockfd].login_username = EMPTY;
+				clients_state[client_sockfd].cur_dir = BASE_DIR;
 			}
 		}
 	}
@@ -189,11 +208,38 @@ string password_command_handler(int client_sockfd , stringstream& command_stream
 string quit_command_handler(int client_sockfd , map < Sfd , Login_State >& clients_state){
 	if(clients_state[client_sockfd].login_state == BASE_STATE || 
 						clients_state[client_sockfd].login_state == MID_STATE)
-		return ERROR;
+		return NEED_ACC;
 
 	clients_state[client_sockfd].login_state = BASE_STATE;
+	clients_state[client_sockfd].cur_dir = BASE_DIR;
+
 	return SUCCESSFUL_QUIT;
 }
+
+string pwd_command_handler(int client_sockfd , map < Sfd , Login_State >& clients_state){
+	if(clients_state[client_sockfd].login_state == BASE_STATE || 
+						clients_state[client_sockfd].login_state == MID_STATE)
+		return NEED_ACC;
+
+	return clients_state[client_sockfd].cur_dir;
+}
+
+string mkd_command_handler(int client_sockfd , stringstream& command_stream ,
+							map < Sfd , Login_State >& clients_state){
+	if(clients_state[client_sockfd].login_state == BASE_STATE || 
+						clients_state[client_sockfd].login_state == MID_STATE)
+		return NEED_ACC;
+
+	string new_dir;
+	command_stream >> new_dir;
+	string tcommand = "mkdir ";
+	tcommand += clear_new_line(clients_state[client_sockfd].cur_dir) + "/" + new_dir;
+	if(system(tcommand.c_str()) == COMMAND_COMPLETED)
+		return "257: " + new_dir + " created";
+	return ERROR;
+}
+
+
 
 string command_handler(string command_message , int client_sockfd , map < int , int >& command_fd_to_data_fd , 
 										 map < Sfd , Login_State >& clients_state , 
@@ -211,6 +257,10 @@ string command_handler(string command_message , int client_sockfd , map < int , 
 		log = password_command_handler(client_sockfd , command_stream , clients_state , users);
 	else if(command == "quit")
 		log = quit_command_handler(client_sockfd , clients_state);
+	else if(command == "pwd")
+		log = pwd_command_handler(client_sockfd , clients_state);
+	else if(command == "mkd")
+		log = mkd_command_handler(client_sockfd , command_stream , clients_state);
 	else{
 		if(clients_state[client_sockfd].login_state == MID_STATE){
 			clients_state[client_sockfd].login_state = BASE_STATE;
@@ -258,6 +308,9 @@ int main(){
 
 	map < int , int > command_fd_to_data_fd;
 	map < Sfd , Login_State > clients_state;
+
+	BASE_DIR = getcwd(NULL , 0);
+	BASE_DIR += "\n";
 	// Json_parser my_parser("config.json");
 	// cout << my_parser.get_raw_data() << endl;
 // 	cout << my_parser.get_server_command_port() << endl;
