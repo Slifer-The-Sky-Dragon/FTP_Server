@@ -7,10 +7,23 @@
 #include <map>
 #include <sstream>
 #include <unistd.h>
+#include "jute.h"
 
 using namespace std;
 
 #define COMMAND_COMPLETED 0
+
+#define CONFIG_FILE_NAME "config.json"
+
+#define COMMAND_PORT_JSON_FIELD "commandChannelPort"
+#define DATA_PORT_JSON_FIELD "dataChannelPort"
+#define USERS_JSON_FIELD "users"
+#define FILES_JSON_FIELD "files"
+
+#define JSON_USER_USERNAME_FIELD "user"
+#define JSON_USER_PASSWORD_FIELD "password"
+#define JSON_USER_ADMIN_FIELD "admin"
+#define JSON_USER_SIZE_FIELD "size"
 
 #define BASE_STATE 0
 #define MID_STATE 1
@@ -46,6 +59,7 @@ typedef int Sfd;
 typedef int State;
 typedef string Username;
 typedef string Directory;
+typedef string File;
 
 typedef pair < Port , Sfd > Client_info;
 
@@ -332,6 +346,12 @@ string chdir_command_handler(int client_sockfd, stringstream& command_stream,
 
     string path;
     command_stream >> path;
+
+    if(path == EMPTY){
+        clients_state[client_sockfd].cur_dir = BASE_DIR;
+        return SUCCESSFUL_CHANGE;
+    }
+
     string composed_path = clear_new_line(clients_state[client_sockfd].cur_dir) + "/" + path;
     string abs_path = abspath(composed_path);
 
@@ -414,12 +434,51 @@ void check_for_clients_responses(fd_set* read_sockfd_list , Client_info client_s
     }
 }
 
+string read_data_from_file(string file_name){
+    string result = EMPTY;
+
+    ifstream file_stream(file_name);
+
+    string cur_line;
+    while(getline(file_stream , cur_line)){
+        result += cur_line;
+    }
+    return result;
+}
+
+void initial_server_variables_from_config_file(string config_file_name , int& server_command_port , 
+                                            int& server_data_port , vector < User >& users , 
+                                            vector < File >& admin_files){
+    string data = read_data_from_file(config_file_name);
+    jute::jValue jparser = jute::parser::parse(data);
+
+    server_command_port = jparser[COMMAND_PORT_JSON_FIELD].as_int();
+    server_data_port = jparser[DATA_PORT_JSON_FIELD].as_int();
+
+    for(int i = 0 ; i < jparser[USERS_JSON_FIELD].size() ; i++){
+        User new_user;
+        new_user.username = jparser[USERS_JSON_FIELD][i][JSON_USER_USERNAME_FIELD].as_string();
+        new_user.password = jparser[USERS_JSON_FIELD][i][JSON_USER_PASSWORD_FIELD].as_string();
+        new_user.is_admin = (jparser[USERS_JSON_FIELD][i][JSON_USER_ADMIN_FIELD].as_string() == "true");
+        new_user.download_size = jparser[USERS_JSON_FIELD][i][JSON_USER_SIZE_FIELD].as_int();
+        users.push_back(new_user);    
+    }
+
+    for(int i = 0 ; i < jparser[FILES_JSON_FIELD].size() ; i++){
+        File new_file = jparser[FILES_JSON_FIELD][i].as_string();
+        admin_files.push_back(new_file);
+    }
+
+}
+
 int main(){
 
     Client_info client_sockfd_list[MAX_USER];
 
     map < int , int > command_fd_to_data_fd;
     map < Sfd , Login_State > clients_state;
+    vector < User > users;
+    vector < File > admin_files;
 
     BASE_DIR = getcwd(NULL , 0);
     BASE_DIR += "\n";
@@ -427,14 +486,22 @@ int main(){
     int server_command_port = 8000;
     int server_data_port = 8001;
 
-    User test_user;
-    test_user.username = "Ali";
-    test_user.password = "1234";
-    test_user.is_admin = 1;
-    test_user.download_size = 100000;
+    initial_server_variables_from_config_file(CONFIG_FILE_NAME , server_command_port , 
+                                                server_data_port , users , admin_files);
 
-    vector < User > users;
-    users.push_back(test_user);
+    //Server information
+        cout << "----> Command port = " << server_command_port << endl;
+        cout << "----> Data port = " << server_data_port << endl;
+        cout << "----> Users : " << endl;
+        for(int i = 0 ; i < users.size() ; i++){
+            cout << users[i].username << " - " << users[i].password << " - " << users[i].is_admin << " - ";
+            cout << users[i].download_size << endl;
+        }
+        cout << "----> Files: " << endl;
+        for(int i = 0 ; i < admin_files.size() ; i++){
+            cout << admin_files[i] << endl;
+        }
+    //
 
     fd_set read_sockfd_list;
 

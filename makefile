@@ -3,7 +3,7 @@ CC_OPTS = -std=c++11 -Werror --pedantic
 
 BUILD_DIR = build
 
-OBJS = socket.o util.o
+OBJS = socket.o util.o jute.o
 TEST_OBJS = test.o $(OBJS)
 CLNT_OBJS = client.o $(OBJS)
 
@@ -22,6 +22,9 @@ socket.o: socket.hpp socket.cpp
 
 util.o: util.hpp util.cpp
 	$(CC) $(CC_OPTS) -c util.cpp -o $(BUILD_DIR)/util.o
+
+jute.o: jute.h jute.cpp
+	$(CC) $(CC_OPTS) -c jute.cpp -o $(BUILD_DIR)/jute.o
 
 clean:
 	rm -rf $(BUILD_DIR)/ *.out
