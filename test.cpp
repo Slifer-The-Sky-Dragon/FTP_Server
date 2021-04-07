@@ -7,6 +7,7 @@
 #include <map>
 #include <sstream>
 #include <unistd.h>
+#include <dirent.h>
 #include "jute.h"
 
 using namespace std;
@@ -52,6 +53,7 @@ using namespace std;
 #define SUCCESSFUL_CHANGE "250: Successful change.\n"
 #define STX_ERROR "501: Syntax error in parameters or arguments.\n"
 #define FILE_UNAVAILABLE "520: File unavailable.\n"
+#define LIST_TRANSFER_DONE "206: List transfer done.\n"
 #define DEL_FILE "-f"
 #define DEL_DIR "-d"
 
@@ -376,6 +378,40 @@ string chdir_command_handler(int client_sockfd, stringstream& command_stream,
     return SUCCESSFUL_CHANGE;
 }
 
+vector<string> list_dir(string full_path) {
+    vector<string> res;
+    DIR* dir = opendir(clear_new_line(full_path).c_str());
+    struct dirent* dent; 
+    if (dir == NULL) {
+        perror("opendir");
+        return res;
+    }
+
+    while ((dent = readdir(dir)) != NULL) {
+        res.push_back(string(dent->d_name));
+    }
+
+    return res;
+}
+
+string ls_command_handler(int client_sockfd, stringstream& command_stream,
+                map<Sfd, Login_State>& clients_state, map<int, int>& command_fd_to_data_fd){
+    if (!check_login(client_sockfd, clients_state))
+        return NEED_ACC;
+
+    auto dir_files = list_dir(clients_state[client_sockfd].cur_dir);
+    string ls_res = "";
+    for (auto f : dir_files)
+        ls_res += f + " ";
+    ls_res += "\n";
+    cout << "ls_res: " << ls_res << '\n';
+
+    int client_data_sockfd = command_fd_to_data_fd[client_sockfd];
+    send_response_to_client(client_data_sockfd, ls_res);
+    return LIST_TRANSFER_DONE;
+
+}
+
 string command_handler(string command_message , int client_sockfd , map < int , int >& command_fd_to_data_fd , 
                                          map < Sfd , Login_State >& clients_state , 
                                          vector < User > users, vector < File >& admin_files){
@@ -402,6 +438,8 @@ string command_handler(string command_message , int client_sockfd , map < int , 
         log = rename_command_handler(client_sockfd, command_stream, clients_state, admin_files);
     else if(command == "cwd")
         log = chdir_command_handler(client_sockfd, command_stream, clients_state);
+    else if(command == "ls")
+        log = ls_command_handler(client_sockfd, command_stream, clients_state, command_fd_to_data_fd);
     else{
         if(clients_state[client_sockfd].login_state == MID_STATE){
             clients_state[client_sockfd].login_state = BASE_STATE;
