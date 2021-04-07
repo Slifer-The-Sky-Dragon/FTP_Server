@@ -11,10 +11,19 @@ using namespace std;
 
 typedef vector<string> Command;
 
-const int MAX_MESSAGE_LEN = 1 << 14;
+const int MAX_MESSAGE_LEN = 1 << 12;
 const int SRVR_CMD_PORT = 8000;
 const int SRVR_DATA_PORT = 8001;
 const int PORT_OFFSET = 10000;
+
+string clear_new_line(string x){
+    string result = "";
+    for(int i = 0 ; i < x.size() ; i++){
+        if(x[i] != '\n')
+            result += x[i];
+    }
+    return result;
+}
 
 void find_usable_ports(Socket& cmd_sock, Socket& data_sock) {
     for (int i = PORT_OFFSET; i < (1 << 16); i += 2) {
@@ -50,12 +59,14 @@ void check_srvr_cmd_resp(int fd, fd_set* readfds) {
 }
 
 void write_file(char* buf, string filename) {
+    cout << "trying to write in " << filename << "..." << '\n';
     int file_fd = open(filename.c_str(), O_CREAT | O_WRONLY, 0666);
     if (file_fd == -1)
         perror("open");
     int res = write(file_fd, buf, strlen(buf));
     if (res < strlen(buf))
         perror("write");
+    close(file_fd);
 }
 
 void check_srvr_data_resp(int fd, fd_set* readfds, const Command last_cmd) {
@@ -78,9 +89,13 @@ void check_srvr_data_resp(int fd, fd_set* readfds, const Command last_cmd) {
         if (last_cmd[0] != "retr")
             cout << "recieved message: " << buf << '\n';
     
-        else
-            write_file(buf, last_cmd[1]);
+        else {
+            cout << "buf is: " << buf << '\n';
+            string path(clear_new_line(last_cmd[1]));
+            string usable_path(basename(path.c_str()));
+            write_file(buf, usable_path);
             cout << "recieved file written successfully" << '\n';
+        }
     }
 }
 

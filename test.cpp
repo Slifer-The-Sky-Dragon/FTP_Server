@@ -34,7 +34,7 @@ using namespace std;
 #define ADMIN_STATE 3
 
 #define EMPTY ""
-#define MAX_MESSAGE_LEN (1 << 14)
+#define MAX_MESSAGE_LEN (1 << 12)
 
 #define port first
 #define sfd second
@@ -59,9 +59,6 @@ using namespace std;
 #define LIST_TRANSFER_DONE "206: List transfer done.\n"
 #define DEL_FILE "-f"
 #define DEL_DIR "-d"
-
-#define DOWNLOAD_ACC string("download acc\n")
-#define DOWNLOAD_REJ string("download rej\n")
 
 typedef int Port;
 typedef int Sfd;
@@ -111,14 +108,14 @@ string abspath(string path) {
 }
 
 void send_response_to_client(int client_sockfd , string message){
-    if(send(client_sockfd , message.c_str() , MAX_MESSAGE_LEN , 0) != MAX_MESSAGE_LEN)
+    if(send(client_sockfd , message.c_str() , message.size() , 0) != MAX_MESSAGE_LEN)
         cout << "Failed to send message...\n";
     else
         cout << "Message sent succesfully!\n";	
 }
 
 void send_response_to_client(int client_sockfd , char* message){
-    if(send(client_sockfd , message , MAX_MESSAGE_LEN , 0) != MAX_MESSAGE_LEN)
+    if(send(client_sockfd , message , strlen(message) , 0) != MAX_MESSAGE_LEN)
         cout << "Failed to send message..." << endl;
     else
         cout << "Message sent succesfully!" << endl;	
