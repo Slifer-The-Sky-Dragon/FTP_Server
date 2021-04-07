@@ -5,32 +5,13 @@
 #include <vector>
 #include <sys/select.h>
 #include "socket.hpp"
-
-std::vector<std::string> tokenize(std::string line, char seperator) {
-    int start = 0;
-    std::string token;
-    std::vector<std::string> tokens;
-    for (size_t i = 0; i < line.length(); ++i) {
-        if (i == line.length() - 1 && line[i] != seperator) {
-            token = line.substr(start, i - start + 1);
-            tokens.push_back(token);
-        }
-        else {
-            if(line[i] == seperator){
-            token = line.substr(start, i - start);
-            start = i + 1;
-            tokens.push_back(token);
-            }
-        }
-    }
-    return tokens;
-}
+#include "util.hpp"
 
 using namespace std;
 
 typedef vector<string> Command;
 
-const int MAX_MESSAGE_LEN = 512;
+const int MAX_MESSAGE_LEN = 1 << 14;
 const int SRVR_CMD_PORT = 8000;
 const int SRVR_DATA_PORT = 8001;
 const int PORT_OFFSET = 10000;
@@ -68,6 +49,15 @@ void check_srvr_cmd_resp(int fd, fd_set* readfds) {
     }
 }
 
+void write_file(char* buf, string filename) {
+    int file_fd = open(filename.c_str(), O_CREAT | O_WRONLY, 0666);
+    if (file_fd == -1)
+        perror("open");
+    int res = write(file_fd, buf, strlen(buf));
+    if (res < strlen(buf))
+        perror("write");
+}
+
 void check_srvr_data_resp(int fd, fd_set* readfds, const Command last_cmd) {
     char buf[MAX_MESSAGE_LEN];
 
@@ -87,6 +77,10 @@ void check_srvr_data_resp(int fd, fd_set* readfds, const Command last_cmd) {
 
         if (last_cmd[0] != "retr")
             cout << "recieved message: " << buf << '\n';
+    
+        else
+            write_file(buf, last_cmd[1]);
+            cout << "recieved file written successfully" << '\n';
     }
 }
 

@@ -2,13 +2,15 @@
 #include <algorithm>
 #include <vector>
 #include <cstring>
-#include "user.hpp"
-#include "socket.hpp"
 #include <map>
 #include <sstream>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/sendfile.h>
+#include <sys/stat.h>
 #include "jute.h"
+#include "user.hpp"
+#include "socket.hpp"
 
 using namespace std;
 
@@ -32,7 +34,7 @@ using namespace std;
 #define ADMIN_STATE 3
 
 #define EMPTY ""
-#define MAX_MESSAGE_LEN 512
+#define MAX_MESSAGE_LEN (1 << 14)
 
 #define port first
 #define sfd second
@@ -51,11 +53,15 @@ using namespace std;
 #define SUCCESSFUL_QUIT "221: Successful Quit.\n"
 #define NEED_ACC "332: Need account for login.\n"
 #define SUCCESSFUL_CHANGE "250: Successful change.\n"
+#define SUCCESSFUL_DOWNLOAD "226: Successful download.\n"
 #define STX_ERROR "501: Syntax error in parameters or arguments.\n"
 #define FILE_UNAVAILABLE "520: File unavailable.\n"
 #define LIST_TRANSFER_DONE "206: List transfer done.\n"
 #define DEL_FILE "-f"
 #define DEL_DIR "-d"
+
+#define DOWNLOAD_ACC string("download acc\n")
+#define DOWNLOAD_REJ string("download rej\n")
 
 typedef int Port;
 typedef int Sfd;
@@ -409,7 +415,49 @@ string ls_command_handler(int client_sockfd, stringstream& command_stream,
     int client_data_sockfd = command_fd_to_data_fd[client_sockfd];
     send_response_to_client(client_data_sockfd, ls_res);
     return LIST_TRANSFER_DONE;
+}
 
+string upload_file(int client_sockfd, string full_path,
+    map <Sfd, Login_State>& clients_state, map<int, int>& command_fd_to_data_fd) {
+    // send_response_to_client(client_data_sock_fd, DOWNLOAD_ACC);
+    int file_fd = open(full_path.c_str(), O_RDONLY);
+    if (file_fd == -1)
+        perror("open");
+    struct stat file_stat;
+    fstat(file_fd, &file_stat);
+    off_t offset = 0;
+    int data_sockfd = command_fd_to_data_fd[client_sockfd];
+    int res = sendfile(data_sockfd, file_fd, &offset, file_stat.st_size);
+    if (res < file_stat.st_size)
+        perror("sendfile");
+
+    return SUCCESSFUL_DOWNLOAD;
+}
+
+string download_command_handler(int client_sockfd, stringstream& command_stream,
+                map<Sfd, Login_State>& clients_state, map<int, int>& command_fd_to_data_fd,
+                vector<File>& admin_files){
+    int client_data_sockfd = command_fd_to_data_fd[client_sockfd];
+    
+    if (!check_login(client_sockfd, clients_state)) {
+        // send_response_to_client(client_data_sockfd, DOWNLOAD_REJ);
+        return NEED_ACC;
+    }
+    string path;
+    command_stream >> path;
+    string composed_path = clear_new_line(clients_state[client_sockfd].cur_dir) + "/" + path;
+    string full_path = abspath(composed_path);
+
+    if (!check_admin(client_sockfd, clients_state) && file_is_restricted(full_path, admin_files)) {
+        // send_response_to_client(client_data_sockfd, DOWNLOAD_REJ);
+        return FILE_UNAVAILABLE;
+    }
+    if (access(full_path.c_str(), F_OK) == -1) {
+        // send_response_to_client(client_data_sockfd, DOWNLOAD_REJ);
+        return ERROR;
+    }
+    string log = upload_file(client_sockfd, full_path, clients_state, command_fd_to_data_fd);
+    return log;
 }
 
 string command_handler(string command_message , int client_sockfd , map < int , int >& command_fd_to_data_fd , 
@@ -440,6 +488,9 @@ string command_handler(string command_message , int client_sockfd , map < int , 
         log = chdir_command_handler(client_sockfd, command_stream, clients_state);
     else if(command == "ls")
         log = ls_command_handler(client_sockfd, command_stream, clients_state, command_fd_to_data_fd);
+    else if(command == "retr")
+        log = download_command_handler(client_sockfd, command_stream, clients_state,
+            command_fd_to_data_fd, admin_files);
     else{
         if(clients_state[client_sockfd].login_state == MID_STATE){
             clients_state[client_sockfd].login_state = BASE_STATE;
