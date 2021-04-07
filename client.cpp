@@ -3,6 +3,7 @@
 #include <cstring>
 #include <sstream>
 #include <vector>
+#include <algorithm>
 #include <sys/select.h>
 #include "socket.hpp"
 #include "util.hpp"
@@ -20,6 +21,11 @@ typedef vector<string> Command;
 
 const int MAX_MESSAGE_LEN = 1 << 12;
 const int PORT_OFFSET = 10000;
+
+void printchar(char c, int cnt) {
+    for (int i = 0; i < cnt; ++i)
+        cout << c;
+}
 
 string clear_new_line(string x){
     string result = "";
@@ -57,7 +63,8 @@ void find_usable_ports(Socket& cmd_sock, Socket& data_sock) {
 
 void check_srvr_cmd_resp(int fd, fd_set* readfds) {
     if (FD_ISSET(fd, readfds)) {
-        cout << "New event (fd=" << fd << ")" << '\n';
+        printchar('=', 48);
+        cout << '\n' << "New event (fd=" << fd << ")" << '\n';
         char buf[MAX_MESSAGE_LEN];
         memset(buf, 0, MAX_MESSAGE_LEN);
         int res = recv(fd, buf, MAX_MESSAGE_LEN, 0);
@@ -70,7 +77,9 @@ void check_srvr_cmd_resp(int fd, fd_set* readfds) {
             cout << "Descriptor closed unexpectedly" << '\n';
             exit(EXIT_FAILURE);
         }
-        cout << "recieved message: " << buf;
+        cout << buf;
+        // printchar('=', 48);
+        cout << "\n\n";
     }
 }
 
@@ -89,7 +98,8 @@ void check_srvr_data_resp(int fd, fd_set* readfds, const Command last_cmd) {
     char buf[MAX_MESSAGE_LEN];
 
     if (FD_ISSET(fd, readfds)) {
-        cout << "New event (fd=" << fd << ")" << '\n';
+        printchar('=', 48);
+        cout << '\n' << "New event (fd=" << fd << ")" << '\n';
         memset(buf, 0, MAX_MESSAGE_LEN);
         int res = recv(fd, buf, MAX_MESSAGE_LEN, 0);
         if (res < 0) {
@@ -112,6 +122,9 @@ void check_srvr_data_resp(int fd, fd_set* readfds, const Command last_cmd) {
             write_file(buf, usable_path);
             cout << "recieved file written successfully" << '\n';
         }
+
+        // printchar('=', 48);
+        cout << "\n\n";
     }
 }
 
@@ -177,9 +190,10 @@ int main() {
     cmd_sock.connectTo(INADDR_LOOPBACK, server_command_port);
     data_sock.connectTo(INADDR_LOOPBACK, server_data_port);
 
-    cout << "connected to server, ready to go!" << '\n';
+    cout << "connected to server, ready to go!" << "\n\n";
     fd_set readfds;
     Command last_cmd;
+
 
     while (true) {
         int max_fd = make_reading_list(&readfds, cmd_sock.fd(), data_sock.fd());

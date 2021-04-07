@@ -6,7 +6,7 @@
 #include <sstream>
 #include <unistd.h>
 #include <dirent.h>
-// #include <sys/sendfile.h>
+#include <sys/sendfile.h>
 #include <sys/stat.h>
 #include "jute.h"
 #include "user.hpp"
@@ -484,7 +484,8 @@ Report ls_command_handler(int client_sockfd, stringstream& command_stream,
 bool check_download_size(int file_size , string client_username , vector < User >& users){
     for(int i = 0 ; i < users.size() ; i++){
         if(users[i].username == client_username){
-            if(file_size >= users[i].download_size){
+            // cout << "file size: " << file_size << ", " << users[i].download_size << "\n";
+            if(file_size <= users[i].download_size){
                 users[i].download_size -= file_size;
                 return true;
             }
@@ -514,14 +515,14 @@ Report upload_file(int client_sockfd, string full_path,
         return {LOW_DOWNLOAD_SIZE , server_log};
     }
 
-    // off_t offset = 0;
-    // int data_sockfd = command_fd_to_data_fd[client_sockfd];
-    // int res = sendfile(data_sockfd, file_fd, &offset, file_stat.st_size);
-    // if (res < file_stat.st_size){
-    //     server_log = "Username = " + clients_state[client_sockfd].login_username + 
-    //                                         ", download failed(send file error!)\n";
-    //     return {ERROR , server_log};
-    // }
+    off_t offset = 0;
+    int data_sockfd = command_fd_to_data_fd[client_sockfd];
+    int res = sendfile(data_sockfd, file_fd, &offset, file_stat.st_size);
+    if (res < file_stat.st_size){
+        server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                            ", download failed(send file error!)\n";
+        return {ERROR , server_log};
+    }
 
     server_log = "Username = " + clients_state[client_sockfd].login_username + 
                                         ", download completed!\n";    
