@@ -4,18 +4,18 @@ CC_OPTS = -std=c++11 -Werror --pedantic
 BUILD_DIR = build
 
 OBJS = socket.o util.o jute.o
-TEST_OBJS = test.o $(OBJS)
+SRVR_OBJS = server.o $(OBJS)
 CLNT_OBJS = client.o $(OBJS)
 
-test.out client.out: make_build $(CLNT_OBJS) $(TEST_OBJS)
+server.out client.out: make_build $(CLNT_OBJS) $(SRVR_OBJS)
 	$(CC) $(CC_OPTS) $(patsubst %.o, $(BUILD_DIR)/%.o, $(CLNT_OBJS)) -o client.out
-	$(CC) $(CC_OPTS) $(patsubst %.o, $(BUILD_DIR)/%.o, $(TEST_OBJS)) -o test.out
+	$(CC) $(CC_OPTS) $(patsubst %.o, $(BUILD_DIR)/%.o, $(SRVR_OBJS)) -o server.out
 
 client.o: client.cpp
 	$(CC) $(CC_OPTS) -c client.cpp -o $(BUILD_DIR)/client.o
 
-test.o: test.cpp
-	$(CC) $(CC_OPTS) -c test.cpp -o $(BUILD_DIR)/test.o
+server.o: server.cpp
+	$(CC) $(CC_OPTS) -c server.cpp -o $(BUILD_DIR)/server.o
 
 socket.o: socket.hpp socket.cpp
 	$(CC) $(CC_OPTS) -c socket.cpp -o $(BUILD_DIR)/socket.o

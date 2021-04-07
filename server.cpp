@@ -6,17 +6,20 @@
 #include <sstream>
 #include <unistd.h>
 #include <dirent.h>
-#include <sys/sendfile.h>
+// #include <sys/sendfile.h>
 #include <sys/stat.h>
 #include "jute.h"
 #include "user.hpp"
 #include "socket.hpp"
+#include <string>
+#include <fstream>
 
 using namespace std;
 
 #define COMMAND_COMPLETED 0
 
 #define CONFIG_FILE_NAME "config.json"
+#define LOG_FILE_NAME "log.txt"
 
 #define COMMAND_PORT_JSON_FIELD "commandChannelPort"
 #define DATA_PORT_JSON_FIELD "dataChannelPort"
@@ -57,6 +60,7 @@ using namespace std;
 #define STX_ERROR "501: Syntax error in parameters or arguments.\n"
 #define FILE_UNAVAILABLE "520: File unavailable.\n"
 #define LIST_TRANSFER_DONE "206: List transfer done.\n"
+#define LOW_DOWNLOAD_SIZE "425: Can't open data connection.\n"
 #define DEL_FILE "-f"
 #define DEL_DIR "-d"
 
@@ -66,7 +70,7 @@ typedef int State;
 typedef string Username;
 typedef string Directory;
 typedef string File;
-
+typedef pair < string , string > Report;
 typedef pair < Port , Sfd > Client_info;
 
 string BASE_DIR;
@@ -107,18 +111,24 @@ string abspath(string path) {
     return string(buf);
 }
 
+void write_server_log(string x){
+    ofstream server_log_file(LOG_FILE_NAME , ios_base::app);
+    server_log_file << x;
+    server_log_file.close();
+}
+
 void send_response_to_client(int client_sockfd , string message){
-    if(send(client_sockfd , message.c_str() , message.size() , 0) != MAX_MESSAGE_LEN)
-        cout << "Failed to send message...\n";
+    if(send(client_sockfd , message.c_str() , message.size() , 0) != message.size())
+        write_server_log("Failed to send message to socketfd = " + to_string(client_sockfd) + "...\n");
     else
-        cout << "Message sent succesfully!\n";	
+        write_server_log("Server has sent message to socketfd = " + to_string(client_sockfd) + "...\n");	
 }
 
 void send_response_to_client(int client_sockfd , char* message){
-    if(send(client_sockfd , message , strlen(message) , 0) != MAX_MESSAGE_LEN)
-        cout << "Failed to send message..." << endl;
+    if(send(client_sockfd , message , strlen(message) , 0) != strlen(message))
+        write_server_log("Failed to send message to socketfd = " + to_string(client_sockfd) + "...\n");
     else
-        cout << "Message sent succesfully!" << endl;	
+        write_server_log("Server has sent message to socketfd = " + to_string(client_sockfd) + "...\n");	
 }
 
 int make_reading_list(fd_set* read_sockfd_list , int command_sock , int data_sock , Client_info client_sockfd_list[]){
@@ -170,9 +180,9 @@ void check_for_new_connection(int command_or_data , int acceptor_sockfd , fd_set
         socklen_t clsize = sizeof(client_address);
 
         if((client_sockfd = accept(acceptor_sockfd , (struct sockaddr *) &client_address , &clsize)) < 0)
-            cout << "Connection accept error...\n";
+            write_server_log("Socketfd = " + to_string(client_sockfd) + " connect error...\n");
         else{
-            cout << "New client has joined...\n";
+            write_server_log("Socketfd = " + to_string(client_sockfd) + " has connected...\n");
 
             int client_port = ntohs(client_address.sin_port);
 
@@ -188,7 +198,8 @@ void check_for_new_connection(int command_or_data , int acceptor_sockfd , fd_set
                 for(int i = 0 ; i < MAX_USER ; i++){
                     if(client_sockfd_list[i].port == client_port - 1){
                         command_fd_to_data_fd[client_sockfd_list[i].sfd] = client_sockfd;
-                        cout << "Command and Data fetched..." << endl;
+                        write_server_log("Socketfd (Command Channel) = " + to_string(client_sockfd_list[i].sfd) + 
+                                         "& Socketfd (Data Channel) = " + to_string(client_sockfd) + " matched!\n");
                         break;
                     }
                 }
@@ -202,20 +213,22 @@ void check_for_new_connection(int command_or_data , int acceptor_sockfd , fd_set
     }
 }
 
-string username_command_handler(int client_sockfd , stringstream& command_stream ,
+Report username_command_handler(int client_sockfd , stringstream& command_stream ,
                                 map < Sfd , Login_State >& clients_state){
-
+    string server_log = EMPTY;
     string client_username;
     command_stream >> client_username;
 
     if(clients_state[client_sockfd].login_state != BASE_STATE){
-        return BAD_SEQUENCE_OF_COMMANDS;
+        server_log = "socketfd = " + to_string(client_sockfd) + ", entered bad sequence of commands...\n";
+        return {BAD_SEQUENCE_OF_COMMANDS , server_log};
     }
 
+    server_log = "socketfd = " + to_string(client_sockfd) + ", entered username = " + client_username + "\n";
     clients_state[client_sockfd].login_state = MID_STATE;
     clients_state[client_sockfd].login_username = client_username;
 
-    return USERNAME_IS_OK;
+    return {USERNAME_IS_OK , server_log};
 }
 
 int check_username_and_password(string username, string password, vector < User > users){
@@ -235,15 +248,17 @@ int check_username_and_password(string username, string password, vector < User 
     return BASE_STATE;
 }
 
-string password_command_handler(int client_sockfd , stringstream& command_stream ,
+Report password_command_handler(int client_sockfd , stringstream& command_stream ,
                                 map < Sfd , Login_State >& clients_state , 
                                 vector < User > users){
+    string server_log = EMPTY;
 
     string client_password;
     command_stream >> client_password;
 
     if(clients_state[client_sockfd].login_state != MID_STATE){
-        return BAD_SEQUENCE_OF_COMMANDS;
+        server_log = "socketfd = " + to_string(client_sockfd) + ", entered bad sequence of commands...\n";
+        return {BAD_SEQUENCE_OF_COMMANDS , server_log};
     }
 
     int login_status = check_username_and_password(clients_state[client_sockfd].login_username, client_password, users);
@@ -251,52 +266,75 @@ string password_command_handler(int client_sockfd , stringstream& command_stream
     if(login_status == BASE_STATE){
         clients_state[client_sockfd].login_state = BASE_STATE;
         clients_state[client_sockfd].login_username = EMPTY;
-        return INVALID_USER_PASS;
+        server_log = "socketfd = " + to_string(client_sockfd) + ", entered wrong username/password...\n";
+        return {INVALID_USER_PASS , server_log};
     }
     else{
+        server_log = "Username = " + clients_state[client_sockfd].login_username + " has signed in, socketfd = ";
+        server_log += to_string(client_sockfd) + "\n"; 
         clients_state[client_sockfd].login_state = login_status;
-        return SUCCESSFUL_LOGIN;
+        return {SUCCESSFUL_LOGIN , server_log};
     }
 }
 
-string quit_command_handler(int client_sockfd , map < Sfd , Login_State >& clients_state){
-    if(clients_state[client_sockfd].login_state == BASE_STATE || 
-                        clients_state[client_sockfd].login_state == MID_STATE)
-        return NEED_ACC;
+Report quit_command_handler(int client_sockfd , map < Sfd , Login_State >& clients_state){
+    string server_log = EMPTY;
+    if(!check_login(client_sockfd, clients_state)){
+        server_log = "socketfd = " + to_string(client_sockfd) + ", used quit before sign in\n";
+        return {NEED_ACC , server_log};
+    }
 
+    server_log = "Username = " + clients_state[client_sockfd].login_username + " has signed out, socketfd = ";
+    server_log += to_string(client_sockfd) + "\n";
     clients_state[client_sockfd].login_state = BASE_STATE;
     clients_state[client_sockfd].cur_dir = BASE_DIR;
 
-    return SUCCESSFUL_QUIT;
+    return {SUCCESSFUL_QUIT , server_log};
 }
 
-string pwd_command_handler(int client_sockfd , map < Sfd , Login_State >& clients_state){
-    if(clients_state[client_sockfd].login_state == BASE_STATE || 
-                        clients_state[client_sockfd].login_state == MID_STATE)
-        return NEED_ACC;
+Report pwd_command_handler(int client_sockfd , map < Sfd , Login_State >& clients_state){
+    string server_log = EMPTY;
+    if(!check_login(client_sockfd, clients_state)){
+        server_log = "socketfd = " + to_string(client_sockfd) + ", used pwd before sign in\n";
+        return {NEED_ACC , server_log};
+    }
 
-    return clients_state[client_sockfd].cur_dir;
+    server_log = "Username = " + clients_state[client_sockfd].login_username + " used pwd, socketfd = ";
+    server_log += to_string(client_sockfd) + "\n";
+    return {clients_state[client_sockfd].cur_dir , server_log};
 }
 
-string mkd_command_handler(int client_sockfd , stringstream& command_stream ,
+Report mkd_command_handler(int client_sockfd , stringstream& command_stream ,
                             map < Sfd , Login_State >& clients_state){
-    if(clients_state[client_sockfd].login_state == BASE_STATE || 
-                        clients_state[client_sockfd].login_state == MID_STATE)
-        return NEED_ACC;
+    string server_log = EMPTY;
+    if(!check_login(client_sockfd, clients_state)){
+        server_log = "socketfd = " + to_string(client_sockfd) + ", used mkd before sign in\n";
+        return {NEED_ACC , server_log};
+    }
 
     string new_dir;
     command_stream >> new_dir;
     string tcommand = "mkdir ";
     tcommand += clear_new_line(clients_state[client_sockfd].cur_dir) + "/" + new_dir;
-    if(system(tcommand.c_str()) == COMMAND_COMPLETED)
-        return "257: " + new_dir + " created\n";
-    return ERROR;
+    if(system(tcommand.c_str()) == COMMAND_COMPLETED){
+        server_log = "Username = " + clients_state[client_sockfd].login_username + " used mkd to create ";
+        server_log += new_dir + ", socketfd = ";
+        server_log += to_string(client_sockfd) + "\n";
+
+        return {"257: " + new_dir + " created\n" , server_log};
+    }
+    server_log = "Username = " + clients_state[client_sockfd].login_username + " used mkd and failed, socketfd = ";
+    server_log += to_string(client_sockfd) + "\n";
+    return {ERROR , server_log};
 }
 
-string delete_command_handler(int client_sockfd, stringstream& command_stream,
+Report delete_command_handler(int client_sockfd, stringstream& command_stream,
                 map<Sfd, Login_State>& clients_state, vector<File>& admin_files){
-    if (!check_login(client_sockfd, clients_state))
-        return NEED_ACC;
+    string server_log = EMPTY;
+    if (!check_login(client_sockfd, clients_state)){
+        server_log = "socketfd = " + to_string(client_sockfd) + ", used dele before sign in\n";
+        return {NEED_ACC , server_log};
+    }
     
     string flag, path;
     command_stream >> flag >> path;
@@ -304,34 +342,46 @@ string delete_command_handler(int client_sockfd, stringstream& command_stream,
     string composed_path = clear_new_line(clients_state[client_sockfd].cur_dir) + "/" + path;
     string full_path = abspath(composed_path);
 
-    if (!check_admin(client_sockfd, clients_state) && file_is_restricted(full_path, admin_files))
-        return FILE_UNAVAILABLE;
+    if (!check_admin(client_sockfd, clients_state) && file_is_restricted(full_path, admin_files)){
+        server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                            " failed to delete file (file not exists)\n";
+        return {ERROR , server_log};
+    }
     
     if (flag == DEL_FILE) {
         if (unlink(full_path.c_str()) == -1) {
-            perror("unlink");
-            return ERROR;
+            server_log = "Username = " + clients_state[client_sockfd].login_username +
+                                            " failed to delete file (wrong flag!)\n";
+            return {ERROR , server_log};
         }
     }
     else if (flag == DEL_DIR) {
         if (rmdir(full_path.c_str()) == -1) {
-            perror("rmdir");
-            return ERROR;
+            server_log = "Username = " + clients_state[client_sockfd].login_username +
+                                            "failed to delete file (wrong flag!)\n";
+            return {ERROR , server_log};
         }
     }
     else {
-        cout << "delete: undefined flag" << '\n';
-        return STX_ERROR;
+        server_log = "Username = " + clients_state[client_sockfd].login_username +
+                                        " used delete: undefined flag\n";
+        return {STX_ERROR , server_log};
     }
 
-    string log = "250: " + path + " deleted.\n";
-    return log;
+    server_log = "Username = " + clients_state[client_sockfd].login_username +
+                                "has deleted : " + path + "\n";
+    string message = "250: " + path + " deleted.\n";
+    return {message , server_log};
 }
 
-string rename_command_handler(int client_sockfd, stringstream& command_stream,
+Report rename_command_handler(int client_sockfd, stringstream& command_stream,
                 map<Sfd, Login_State>& clients_state, vector<File>& admin_files){
-    if (!check_login(client_sockfd, clients_state))
-        return NEED_ACC;
+    string server_log = EMPTY;
+
+    if (!check_login(client_sockfd, clients_state)){
+        server_log = "socketfd = " + to_string(client_sockfd) + ", used rename before sign in\n";
+        return {NEED_ACC , server_log};
+    }
     
     string from, to;
     command_stream >> from >> to;
@@ -342,43 +392,54 @@ string rename_command_handler(int client_sockfd, stringstream& command_stream,
     string abs_from = abspath(composed_from);
     string abs_to = abspath(composed_to);
 
-    cout << "abs_from: " << abs_from << '\n';
-    cout << "abs_to: " << abs_to << '\n';
-
-    if (!check_admin(client_sockfd, clients_state) && file_is_restricted(abs_from, admin_files))
-        return FILE_UNAVAILABLE;
-
-    if (rename(abs_from.c_str(), abs_to.c_str()) == -1) {
-        perror("rename");
-        return ERROR;
+    if (!check_admin(client_sockfd, clients_state) && file_is_restricted(abs_from, admin_files)){
+        server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                            " failed to delete file (file unavailable error)\n";
+        return {FILE_UNAVAILABLE , server_log};    
     }
 
-    return SUCCESSFUL_CHANGE;
+    if (rename(abs_from.c_str(), abs_to.c_str()) == -1) {
+        server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                            " failed to rename file (file not exists!)\n";
+        return {ERROR , server_log};
+    }
+
+    server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                 " renamed " + from + " to " + to + "\n";
+    return {SUCCESSFUL_CHANGE , server_log};
 }
 
-string chdir_command_handler(int client_sockfd, stringstream& command_stream,
+Report chdir_command_handler(int client_sockfd, stringstream& command_stream,
                                 map<Sfd, Login_State>& clients_state){
-    if (!check_login(client_sockfd, clients_state))
-        return NEED_ACC;
+    string server_log = EMPTY;
+    if (!check_login(client_sockfd, clients_state)){
+        server_log = "socketfd = " + to_string(client_sockfd) + ", used cwd before sign in\n";
+        return {NEED_ACC , server_log};
+    }
 
     string path;
     command_stream >> path;
 
     if(path == EMPTY){
         clients_state[client_sockfd].cur_dir = BASE_DIR;
-        return SUCCESSFUL_CHANGE;
+        server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                    ", changed directory to base\n";
+        return {SUCCESSFUL_CHANGE , server_log};
     }
 
     string composed_path = clear_new_line(clients_state[client_sockfd].cur_dir) + "/" + path;
     string abs_path = abspath(composed_path);
 
     if (access(abs_path.c_str(), F_OK) == -1) {
-        perror("access");
-        return STX_ERROR;
+        server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                            ", failed to change directory (directory not exists!)\n";
+        return {ERROR , server_log};
     }
 
     clients_state[client_sockfd].cur_dir = abs_path + "\n";
-    return SUCCESSFUL_CHANGE;
+    server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                ", changed directory to" + clients_state[client_sockfd].cur_dir;
+    return {SUCCESSFUL_CHANGE , server_log};
 }
 
 vector<string> list_dir(string full_path) {
@@ -386,7 +447,6 @@ vector<string> list_dir(string full_path) {
     DIR* dir = opendir(clear_new_line(full_path).c_str());
     struct dirent* dent; 
     if (dir == NULL) {
-        perror("opendir");
         return res;
     }
 
@@ -397,115 +457,177 @@ vector<string> list_dir(string full_path) {
     return res;
 }
 
-string ls_command_handler(int client_sockfd, stringstream& command_stream,
+Report ls_command_handler(int client_sockfd, stringstream& command_stream,
                 map<Sfd, Login_State>& clients_state, map<int, int>& command_fd_to_data_fd){
-    if (!check_login(client_sockfd, clients_state))
-        return NEED_ACC;
+    string server_log = EMPTY;
+    if (!check_login(client_sockfd, clients_state)){
+        server_log = "socketfd = " + to_string(client_sockfd) + ", used ls before sign in\n";
+        return {NEED_ACC , server_log};
+    }
 
     auto dir_files = list_dir(clients_state[client_sockfd].cur_dir);
     string ls_res = "";
-    for (auto f : dir_files)
-        ls_res += f + " ";
+    for (auto f : dir_files){
+        if(f != LOG_FILE_NAME)
+            ls_res += f + " ";
+    }
     ls_res += "\n";
-    cout << "ls_res: " << ls_res << '\n';
 
     int client_data_sockfd = command_fd_to_data_fd[client_sockfd];
     send_response_to_client(client_data_sockfd, ls_res);
-    return LIST_TRANSFER_DONE;
+
+    server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                ", used ls" + "\n";    
+    return {LIST_TRANSFER_DONE , server_log};
 }
 
-string upload_file(int client_sockfd, string full_path,
-    map <Sfd, Login_State>& clients_state, map<int, int>& command_fd_to_data_fd) {
+bool check_download_size(int file_size , string client_username , vector < User >& users){
+    for(int i = 0 ; i < users.size() ; i++){
+        if(users[i].username == client_username){
+            if(file_size >= users[i].download_size){
+                users[i].download_size -= file_size;
+                return true;
+            }
+            else
+                return false;
+        }
+    }
+    return false;
+}
+
+Report upload_file(int client_sockfd, string full_path,
+    map <Sfd, Login_State>& clients_state, map<int, int>& command_fd_to_data_fd , vector < User >& users) {
     // send_response_to_client(client_data_sock_fd, DOWNLOAD_ACC);
+    string server_log = EMPTY;
     int file_fd = open(full_path.c_str(), O_RDONLY);
-    if (file_fd == -1)
-        perror("open");
+    if (file_fd == -1){
+        server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                            ", download failed(fail to open file error!)\n";
+        return {ERROR , server_log};
+    }
     struct stat file_stat;
     fstat(file_fd, &file_stat);
-    off_t offset = 0;
-    int data_sockfd = command_fd_to_data_fd[client_sockfd];
-    int res = sendfile(data_sockfd, file_fd, &offset, file_stat.st_size);
-    if (res < file_stat.st_size)
-        perror("sendfile");
 
-    return SUCCESSFUL_DOWNLOAD;
+    if(!check_download_size(file_stat.st_size , clients_state[client_sockfd].login_username , users)){
+         server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                            ", download failed(low download size error!)\n";
+        return {LOW_DOWNLOAD_SIZE , server_log};
+    }
+
+    // off_t offset = 0;
+    // int data_sockfd = command_fd_to_data_fd[client_sockfd];
+    // int res = sendfile(data_sockfd, file_fd, &offset, file_stat.st_size);
+    // if (res < file_stat.st_size){
+    //     server_log = "Username = " + clients_state[client_sockfd].login_username + 
+    //                                         ", download failed(send file error!)\n";
+    //     return {ERROR , server_log};
+    // }
+
+    server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                        ", download completed!\n";    
+    return {SUCCESSFUL_DOWNLOAD , server_log};
 }
 
-string download_command_handler(int client_sockfd, stringstream& command_stream,
+Report download_command_handler(int client_sockfd, stringstream& command_stream,
                 map<Sfd, Login_State>& clients_state, map<int, int>& command_fd_to_data_fd,
-                vector<File>& admin_files){
+                vector<File>& admin_files, vector < User >& users){
+
+    string server_log = EMPTY;
     int client_data_sockfd = command_fd_to_data_fd[client_sockfd];
     
-    if (!check_login(client_sockfd, clients_state)) {
-        // send_response_to_client(client_data_sockfd, DOWNLOAD_REJ);
-        return NEED_ACC;
+    if (!check_login(client_sockfd, clients_state)){
+        server_log = "socketfd = " + to_string(client_sockfd) + ", used retr before sign in\n";
+        return {NEED_ACC , server_log};
     }
+
     string path;
     command_stream >> path;
     string composed_path = clear_new_line(clients_state[client_sockfd].cur_dir) + "/" + path;
     string full_path = abspath(composed_path);
 
     if (!check_admin(client_sockfd, clients_state) && file_is_restricted(full_path, admin_files)) {
-        // send_response_to_client(client_data_sockfd, DOWNLOAD_REJ);
-        return FILE_UNAVAILABLE;
+        server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                            " failed to download file (file unavailable error)\n";
+        return {FILE_UNAVAILABLE , server_log};
     }
     if (access(full_path.c_str(), F_OK) == -1) {
-        // send_response_to_client(client_data_sockfd, DOWNLOAD_REJ);
-        return ERROR;
+        server_log = "Username = " + clients_state[client_sockfd].login_username + 
+                                            ", failed to download file (file not exists!)\n";
+        return {ERROR , server_log};
     }
-    string log = upload_file(client_sockfd, full_path, clients_state, command_fd_to_data_fd);
-    return log;
+
+    Report report = upload_file(client_sockfd, full_path, clients_state, command_fd_to_data_fd , users);
+    return report;
+}
+
+Report help_command_handler(int client_sockfd, stringstream& command_stream,
+                                map<Sfd, Login_State>& clients_state){
+    string server_log = EMPTY;
+    if (!check_login(client_sockfd, clients_state)){
+        server_log = "socketfd = " + to_string(client_sockfd) + ", used help before sign in\n";
+        return {NEED_ACC , server_log};
+    }
+
+    string result = "214\n";
+    result += "USER [name], Its argument is used to specify the user’s string. It is used for user authentication.\n";
+
+    server_log = "Username = " + clients_state[client_sockfd].login_username + " used help\n";
+
+    return {result , server_log};
 }
 
 string command_handler(string command_message , int client_sockfd , map < int , int >& command_fd_to_data_fd , 
                                          map < Sfd , Login_State >& clients_state , 
-                                         vector < User > users, vector < File >& admin_files){
-    string log = "Nothing...\n";
-
+                                         vector < User >& users, vector < File >& admin_files){
     stringstream command_stream(command_message);
 
     string command;
     command_stream >> command;
 
+    Report report;
     if(command == "user")
-        log = username_command_handler(client_sockfd , command_stream , clients_state);
+        report = username_command_handler(client_sockfd , command_stream , clients_state);
     else if(command == "pass")
-        log = password_command_handler(client_sockfd , command_stream , clients_state , users);
+        report = password_command_handler(client_sockfd , command_stream , clients_state , users);
     else if(command == "quit")
-        log = quit_command_handler(client_sockfd , clients_state);
+        report = quit_command_handler(client_sockfd , clients_state);
     else if(command == "pwd")
-        log = pwd_command_handler(client_sockfd , clients_state);
+        report = pwd_command_handler(client_sockfd , clients_state);
     else if(command == "mkd")
-        log = mkd_command_handler(client_sockfd , command_stream , clients_state);
+        report = mkd_command_handler(client_sockfd , command_stream , clients_state);
     else if(command == "dele")
-        log = delete_command_handler(client_sockfd , command_stream , clients_state, admin_files);
+        report = delete_command_handler(client_sockfd , command_stream , clients_state, admin_files);
     else if(command == "rename")
-        log = rename_command_handler(client_sockfd, command_stream, clients_state, admin_files);
+        report = rename_command_handler(client_sockfd, command_stream, clients_state, admin_files);
     else if(command == "cwd")
-        log = chdir_command_handler(client_sockfd, command_stream, clients_state);
+        report = chdir_command_handler(client_sockfd, command_stream, clients_state);
     else if(command == "ls")
-        log = ls_command_handler(client_sockfd, command_stream, clients_state, command_fd_to_data_fd);
+        report = ls_command_handler(client_sockfd, command_stream, clients_state, command_fd_to_data_fd);
     else if(command == "retr")
-        log = download_command_handler(client_sockfd, command_stream, clients_state,
-            command_fd_to_data_fd, admin_files);
+        report = download_command_handler(client_sockfd, command_stream, clients_state,
+            command_fd_to_data_fd, admin_files , users);
+    else if(command == "help")
+        report = help_command_handler(client_sockfd, command_stream, clients_state);
     else{
         if(clients_state[client_sockfd].login_state == MID_STATE){
             clients_state[client_sockfd].login_state = BASE_STATE;
-            log = BAD_SEQUENCE_OF_COMMANDS;
+            string server_log = "socketfd = " + to_string(client_sockfd) + ", entered bad sequence of commands...\n";
+            report = {BAD_SEQUENCE_OF_COMMANDS , server_log};
         }
 
-        else
-            log = ERROR;
+        else{
+            report = {ERROR , "socketfd = " + to_string(client_sockfd) + " wrong command error!\n"};
+        }
     }
 
-    send_response_to_client(client_sockfd , log);
-    return log;
+    send_response_to_client(client_sockfd , report.first);
+    return report.second;
 }
 
 void check_for_clients_responses(fd_set* read_sockfd_list , Client_info client_sockfd_list[] , char* result , 
                                                 map < int , int >& command_fd_to_data_fd , 
                                                 map < Sfd , Login_State >& clients_state , 
-                                                vector < User > users, vector < File >& admin_files){
+                                                vector < User >& users, vector < File >& admin_files){
     for(int i = 0 ; i < MAX_USER ; i++){
         if(client_sockfd_list[i].sfd == NO_USER)
             continue;
@@ -516,17 +638,18 @@ void check_for_clients_responses(fd_set* read_sockfd_list , Client_info client_s
 
             string received_message = convert_to_string(result , message_len);
             if(message_len < 0)
-                cout << "Recieving error..." << endl;
+                write_server_log("Sever message recieving error...\n");
             else if(message_len == 0){
-                cout << "A client has diconnected from server! Closing socket..." << endl;
+                write_server_log("Socketfd = " + to_string(client_sockfd_list[i].sfd) + 
+                                            " has diconnected from server! Closing socket...\n");
                 close(client_sockfd_list[i].sfd);
                 client_sockfd_list[i].sfd = NO_USER;
                 client_sockfd_list[i].port = NO_USER;
             }
             else{
-                string log = command_handler(received_message , client_sockfd_list[i].sfd , command_fd_to_data_fd , 
-                                                clients_state , users , admin_files);
-                cout << log << endl;
+                string server_log = command_handler(received_message , client_sockfd_list[i].sfd , command_fd_to_data_fd , 
+                                                        clients_state , users , admin_files);
+                write_server_log(server_log);
             }
         }
     }
@@ -581,25 +704,11 @@ int main(){
     BASE_DIR = getcwd(NULL , 0);
     BASE_DIR += "\n";
 
-    int server_command_port = 8000;
-    int server_data_port = 8001;
+    int server_command_port;
+    int server_data_port;
 
     initial_server_variables_from_config_file(CONFIG_FILE_NAME , server_command_port , 
                                                 server_data_port , users , admin_files);
-
-    //Server information
-        cout << "----> Command port = " << server_command_port << endl;
-        cout << "----> Data port = " << server_data_port << endl;
-        cout << "----> Users : " << endl;
-        for(int i = 0 ; i < users.size() ; i++){
-            cout << users[i].username << " - " << users[i].password << " - " << users[i].is_admin << " - ";
-            cout << users[i].download_size << endl;
-        }
-        cout << "----> Files: " << endl;
-        for(int i = 0 ; i < admin_files.size() ; i++){
-            cout << admin_files[i] << endl;
-        }
-    //
 
     fd_set read_sockfd_list;
 
@@ -614,9 +723,9 @@ int main(){
     data_sock.bindSock(INADDR_LOOPBACK, server_data_port);
 
     if(listen(command_sock.fd() , MAX_PENDING_CON) < 0)
-        cout << "Command Socket Listening error..." << endl;
+        write_server_log("Command Socket Listening error...\n");
     if(listen(data_sock.fd() , MAX_PENDING_CON) < 0)
-        cout << "Data Socket Listening error..." << endl;
+        write_server_log("Data Socket Listening error...\n");
 
     //initializing client list
     for(int i = 0 ; i < MAX_USER ; i++){
@@ -630,7 +739,7 @@ int main(){
 
         int activity = select(max_fd + 1 , &read_sockfd_list , NULL , NULL , NULL);
         if(activity < 0)
-            cout << "Select Error..." << endl;
+            write_server_log("Select Error...\n");
         
         check_for_new_connection(COMMAND , command_sock.fd() , &read_sockfd_list , 
                                                     client_sockfd_list , command_fd_to_data_fd , clients_state);

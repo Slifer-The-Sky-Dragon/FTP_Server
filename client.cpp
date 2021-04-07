@@ -6,14 +6,19 @@
 #include <sys/select.h>
 #include "socket.hpp"
 #include "util.hpp"
+#include "jute.h"
+#include <fstream>
+
+#define EMPTY ""
+#define CONFIG_FILE_NAME "config.json"
+#define COMMAND_PORT_JSON_FIELD "commandChannelPort"
+#define DATA_PORT_JSON_FIELD "dataChannelPort"
 
 using namespace std;
 
 typedef vector<string> Command;
 
 const int MAX_MESSAGE_LEN = 1 << 12;
-const int SRVR_CMD_PORT = 8000;
-const int SRVR_DATA_PORT = 8001;
 const int PORT_OFFSET = 10000;
 
 string clear_new_line(string x){
@@ -23,6 +28,17 @@ string clear_new_line(string x){
             result += x[i];
     }
     return result;
+}
+
+string find_basename(string path){
+    string result = EMPTY;
+    for(int i = path.size() - 1 ; i >= 0 ; i--){
+        if(path[i] == '/')
+            break;
+        result += path[i];
+    }
+    reverse(result.begin() , result.end());
+    return result; 
 }
 
 void find_usable_ports(Socket& cmd_sock, Socket& data_sock) {
@@ -92,7 +108,7 @@ void check_srvr_data_resp(int fd, fd_set* readfds, const Command last_cmd) {
         else {
             cout << "buf is: " << buf << '\n';
             string path(clear_new_line(last_cmd[1]));
-            string usable_path(basename(path.c_str()));
+            string usable_path = find_basename(path.c_str());
             write_file(buf, usable_path);
             cout << "recieved file written successfully" << '\n';
         }
@@ -122,6 +138,28 @@ int make_reading_list(fd_set* readfds, int cmd_sock, int data_sock) {
     return max(cmd_sock, data_sock);
 }
 
+string read_data_from_file(string file_name){
+    string result = EMPTY;
+
+    ifstream file_stream(file_name);
+
+    string cur_line;
+    while(getline(file_stream , cur_line)){
+        result += cur_line;
+    }
+    return result;
+}
+
+
+void initial_server_variables_from_config_file(string config_file_name , int& server_command_port , 
+                                            int& server_data_port){
+    string data = read_data_from_file(config_file_name);
+    jute::jValue jparser = jute::parser::parse(data);
+
+    server_command_port = jparser[COMMAND_PORT_JSON_FIELD].as_int();
+    server_data_port = jparser[DATA_PORT_JSON_FIELD].as_int();
+}
+
 int main() {
     Socket cmd_sock(SOCK_STREAM);
     Socket data_sock(SOCK_STREAM);
@@ -131,8 +169,13 @@ int main() {
 
     find_usable_ports(cmd_sock, data_sock);
 
-    cmd_sock.connectTo(INADDR_LOOPBACK, SRVR_CMD_PORT);
-    data_sock.connectTo(INADDR_LOOPBACK, SRVR_DATA_PORT);
+    int server_command_port;
+    int server_data_port;
+
+    initial_server_variables_from_config_file(CONFIG_FILE_NAME , server_command_port , server_data_port);
+
+    cmd_sock.connectTo(INADDR_LOOPBACK, server_command_port);
+    data_sock.connectTo(INADDR_LOOPBACK, server_data_port);
 
     cout << "connected to server, ready to go!" << '\n';
     fd_set readfds;
