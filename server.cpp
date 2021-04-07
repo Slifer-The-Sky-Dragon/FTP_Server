@@ -564,13 +564,26 @@ Report download_command_handler(int client_sockfd, stringstream& command_stream,
 Report help_command_handler(int client_sockfd, stringstream& command_stream,
                                 map<Sfd, Login_State>& clients_state){
     string server_log = EMPTY;
-    if (!check_login(client_sockfd, clients_state)){
-        server_log = "socketfd = " + to_string(client_sockfd) + ", used help before sign in\n";
-        return {NEED_ACC , server_log};
-    }
+    // if (!check_login(client_sockfd, clients_state)){
+    //     server_log = "socketfd = " + to_string(client_sockfd) + ", used help before sign in\n";
+    //     return {NEED_ACC , server_log};
+    // }
 
     string result = "214\n";
-    result += "USER [name], Its argument is used to specify the user’s string. It is used for user authentication.\n";
+    result += "USER [name], Its argument is used to specify the user’s string.\n";
+    result += "It is used for user authentication.\n\n";
+    result += "PASS [password], You can provide password for the user trying to\n";
+    result += "login through this command; USER and PASS shall come consecutively.\n\n";
+    result += "QUIT, exactly the same as logout, if a user has logged in at all\n\n";
+    result += "PWD, Prints current working directory for current logged in user\n\n";
+    result += "MKD <path>, makes a new directory at given RELATIVE path\n\n";
+    result += "DELE [FLAG] <path>, deletes files or directories [admin-access effective];\n";
+    result += "use flags -f for file and -d for dir\n\n";
+    result += "RENAME <from> <to>,\n";
+    result += "rename and/or move a file/directory [admin-access effective]\n\n";
+    result += "CWD <path>, Change working directory\n\n";
+    result += "LS, lists files in the current working directory (what PWD returns)\n\n";
+    result += "RETR <path>, download a file [admin-access effective]\n\n";
 
     server_log = "Username = " + clients_state[client_sockfd].login_username + " used help\n";
 
